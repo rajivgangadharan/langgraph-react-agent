@@ -1,4 +1,5 @@
 import os
+import sys
 from dotenv import load_dotenv
 from langchain.tools import tool
 from langchain.agents import initialize_agent, Tool
@@ -128,10 +129,10 @@ def generate_question_step(state: AgentState) -> AgentState:
     return {**state, "generated_question": generated_question}
 
 
-@tool
 def evaluate_answer_step(state: AgentState) -> AgentState:
     """Evaluate the answer by the student"""
     print("=" * 50)
+
     print(f"Question: {state['generated_question']}")
     student_answer = input("Your Answer: ")  # Get user input
     state["student_answer"] = student_answer  # Store the answer in the state
@@ -158,12 +159,26 @@ def retrieve_context_step(state: AgentState) -> AgentState:
 def reasoning_step(state: AgentState) -> AgentState:
     """Thinks about the best way to answer using retrieved context."""
     prompt = ""
-    if state["generated_question"] is None:
-        prompt = f"Context: {state['retrieved_context']}\nQuestion: \nHow should I proceed to generate a question for a student ?"
-    elif state["student_answer"] is not None:
-        prompt = f"Context: {state['retrieved_context']}\nThought: \nHow should I proceed to evaluate the answer now that I have the answer to the question?"
-    else:
-        prompt = f"Context: {state['retrieved_context']}\nThought: \nHow should I proceed now, given the current context?"
+    try:
+        print(f"STATE is {state}")
+        if state.get("generated_question", "") == "":
+            logger.info("The Question is not yet generated!")
+            prompt = f"Context: {state['retrieved_context']}\nQuestion: \nHow should I proceed to generate a question for a student ?"
+        elif state.get("student_answer", "") != "":
+            logger.info(
+                f"The Student has provided an answer {state['student_answer']}!"
+            )
+            prompt = f"Context: {state['retrieved_context']}\nThought: \nHow should I proceed to evaluate the answer now that I have the answer to the question?"
+        else:
+            logger.info("Something else... let me reason...")
+            prompt = f"Context: {state['retrieved_context']}\nThought: \nHow should I proceed now, given the current context?"
+    except KeyError as ke:
+        logger.error(f"reasoning_step() - Caught {ke}")
+        sys.exit(100)
+    except Exception as e:
+        logger.error(f"reasoning_step() - Caught {e}")
+        sys.exit(100)
+
     thought = llm.invoke(prompt).strip()
 
     return {**state, "thought": thought}
@@ -204,25 +219,29 @@ def main():
 
     workflow.add_edge("retrieve_context", "reasoning")
     workflow.add_edge("reasoning", "generate_question")
-    workflow.add_edge("generate_question", "reasoning")
-    workflow.add_edge("reasoning", "evaluate_answer")
+    workflow.add_edge("generate_question", "evaluate_answer")
     workflow.add_edge("evaluate_answer", END)
 
     graph = workflow.compile()
 
-    state = {
+    state: AgentState = {
         "subject": input["subject"],
         "topic": input["topic"],
         "difficulty": input["difficulty"],
         "board": input["board"],
         "grade": input["grade"],
+        "retrieved_context": "",
+        "generated_question": "",
+        "student_answer": "",
+        "evaluation": "",
+        "thought": "",
     }
 
     output = dict()
     for output in graph.stream(state):
         print(f"OUTPUT = {output}")
 
-    question = output.get("generate_question", {}).get("generated_question", {})
+    # question = output.get("generate_question", {}).get("generated_question", {})
 
 
 # Run the application
